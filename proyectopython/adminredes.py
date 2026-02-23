@@ -14,8 +14,8 @@ st.markdown("Analiza los saltos de red y visualiza el viaje de tus datos por el 
 # --- FUNCIÓN DE GEOLOCALIZACIÓN ---
 def get_geo(ip):
     try:
-        # Ignorar IPs privadas (locales) que no tienen mapa
-        if re.match(r"^(192\.168\.|10\.|172\.|127\.)", ip):
+        # Ignorar IPs privadas (locales) que no tienen ubicación física real
+        if re.match(r"^(192\.168\.|10\.|172\.|127\.|169\.254\.)", ip):
             return None
         
         r = requests.get(f"http://ip-api.com/json/{ip}", timeout=3).json()
@@ -33,7 +33,7 @@ def get_geo(ip):
     return None
 
 # --- ENTRADA DE USUARIO ---
-target = st.text_input("Introduce un dominio (ej. bbc.com, u-tokyo.ac.jp):", "1.1.1.1")
+target = st.text_input("Introduce un dominio o IP (ej. google.com, 1.1.1.1):", "8.8.8.8")
 
 if st.button("Iniciar Rastreo"):
     col1, col2 = st.columns([1, 2])
@@ -43,30 +43,47 @@ if st.button("Iniciar Rastreo"):
         consola = st.empty()
         texto_consola = ""
         
-        # Parámetros optimizados para Windows:
-        # -d: no resuelve nombres (más rápido)
-        # -h 15: máximo 15 saltos
-        # -w 200: espera 200ms por respuesta
-        cmd = ["tracert", "-d", "-h", "15", "-w", "200", target]
+        # DETECCIÓN DE SISTEMA OPERATIVO
+        sistema = platform.system()
         
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, shell=True)
+        if sistema == "Windows":
+            # Comando optimizado para Windows
+            cmd = ["tracert", "-d", "-h", "15", "-w", "200", target]
+        else:
+            # Comando optimizado para Linux (Streamlit Cloud)
+            # -n: sin DNS, -m: saltos máx, -w: espera, -q: 1 intento por salto para rapidez
+            cmd = ["traceroute", "-n", "-m", "15", "-w", "1", "-q", "1", target]
         
-        hops_data = []
-        ip_vistas = set()
-
-        for line in process.stdout:
-            texto_consola += line
-            consola.code(texto_consola) # Muestra el avance en tiempo real
+        try:
+            # Ejecutamos el subproceso
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.STDOUT, 
+                text=True, 
+                shell=(sistema == "Windows")
+            )
             
-            # Buscar IP en la línea
-            match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
-            if match:
-                ip = match.group(1)
-                if ip not in ip_vistas:
-                    geo = get_geo(ip)
-                    if geo:
-                        hops_data.append(geo)
-                    ip_vistas.add(ip)
+            hops_data = []
+            ip_vistas = set()
+
+            # Leemos la salida línea por línea en tiempo real
+            for line in process.stdout:
+                texto_consola += line
+                consola.code(texto_consola) 
+                
+                # Extraer IP usando expresiones regulares
+                match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
+                if match:
+                    ip = match.group(1)
+                    if ip not in ip_vistas:
+                        geo = get_geo(ip)
+                        if geo:
+                            hops_data.append(geo)
+                        ip_vistas.add(ip)
+                        
+        except Exception as e:
+            st.error(f"Error al ejecutar el comando: {e}")
 
     with col2:
         if hops_data:
@@ -74,10 +91,9 @@ if st.button("Iniciar Rastreo"):
             
             st.subheader("🗺️ Visualización de Ruta")
             
-            # Crear mapa con Plotly Graph Objects para mejor control de líneas
             fig = go.Figure()
 
-            # Añadir las líneas que conectan los puntos
+            # Dibujar líneas y marcadores
             fig.add_trace(go.Scattergeo(
                 lat = df['lat'],
                 lon = df['lon'],
@@ -104,7 +120,6 @@ if st.button("Iniciar Rastreo"):
             st.subheader("📊 Tabla de Detalles")
             st.dataframe(df[["IP", "Ciudad", "País", "ISP"]], use_container_width=True)
         else:
-            st.warning("No se detectaron saltos públicos geolocalizables aún.")
+            st.warning("No se detectaron saltos públicos para el mapa. Prueba con un sitio internacional como 'www.ox.ac.uk'.")
 
-# --- PIE DE PÁGINA ---
-st.info("Nota: Los saltos que muestran '*' son routers que bloquean paquetes de rastreo por seguridad.")
+st.info("Nota: En la nube (Linux), si el comando 'traceroute' no está instalado en el servidor, verás un error de 'not found'.")
