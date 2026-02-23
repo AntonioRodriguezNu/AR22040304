@@ -6,7 +6,7 @@ import socket
 import re
 
 st.set_page_config(page_title="Traceroute Visual Pro", layout="wide")
-st.title("🌐 Explorador de Rutas de Internet (Versión Web)")
+st.title("🌐 Explorador de Rutas de Internet")
 
 # --- FUNCIÓN DE GEOLOCALIZACIÓN ---
 def get_geo(ip):
@@ -22,42 +22,59 @@ def get_geo(ip):
     except:
         return None
 
-# --- LÓGICA DE RASTREO SIMULADO PARA WEB ---
-# Debido a que los servidores bloquean ICMP, usaremos una técnica de 
-# rastreo basada en saltos de red conocidos para que el mapa se vea genial.
 target = st.text_input("Introduce un dominio o IP:", "google.com")
 
 if st.button("Iniciar Rastreo"):
-    with st.status("Rastreando ruta...") as status:
+    with st.spinner("Localizando nodos..."):
         try:
-            # 1. Obtener la IP final
-            final_ip = socket.gethostbyname(target)
-            st.write(f"📍 Destino detectado: {final_ip}")
+            # Obtener IP del servidor actual (Origen) y del Objetivo (Destino)
+            ip_origen = requests.get('https://api.ipify.org').text
+            ip_destino = socket.gethostbyname(target)
             
-            # 2. Obtener datos geográficos del destino
-            geo_final = get_geo(final_ip)
+            geo_origen = get_geo(ip_origen)
+            geo_destino = get_geo(ip_destino)
             
-            if geo_final:
-                # Simulamos puntos intermedios para la visualización 
-                # (Ya que el servidor bloquea el acceso real a la red)
-                hops_data = [geo_final]
+            puntos = []
+            if geo_origen: puntos.append(geo_origen)
+            if geo_destino: puntos.append(geo_destino)
+            
+            if len(puntos) >= 1:
+                df = pd.DataFrame(puntos)
                 
-                df = pd.DataFrame(hops_data)
-                
-                st.subheader("🗺️ Visualización de Ruta")
-                fig = go.Figure(go.Scattergeo(
-                    lat = df['lat'], lon = df['lon'],
+                # Crear el mapa
+                fig = go.Figure()
+
+                # Dibujar línea entre origen y destino
+                if len(puntos) > 1:
+                    fig.add_trace(go.Scattergeo(
+                        lat = [geo_origen['lat'], geo_destino['lat']],
+                        lon = [geo_origen['lon'], geo_destino['lon']],
+                        mode = 'lines',
+                        line = dict(width=2, color='red')
+                    ))
+
+                # Dibujar los puntos
+                fig.add_trace(go.Scattergeo(
+                    lat = df['lat'],
+                    lon = df['lon'],
                     mode = 'markers+text',
-                    marker = dict(size=12, color='red'),
-                    text = df['Ciudad']
+                    marker = dict(size=10, color='blue'),
+                    text = df['Ciudad'],
+                    hoverinfo = 'text'
                 ))
-                fig.update_layout(geo=dict(projection_type='natural earth'))
-                st.plotly_chart(fig, use_container_width=True)
+
+                fig.update_layout(
+                    geo = dict(projection_type = 'natural earth', showcountries = True),
+                    margin={"r":0,"t":0,"l":0,"b":0}
+                )
                 
-                st.subheader("📊 Detalles del Nodo")
-                st.dataframe(df[["IP", "Ciudad", "País", "ISP"]])
+                st.plotly_chart(fig, use_container_width=True)
+                st.subheader("📊 Detalles del Viaje")
+                st.table(df[["IP", "Ciudad", "País", "ISP"]])
             else:
-                st.error("No se pudo localizar la ubicación física de esa IP.")
+                st.error("No se pudo obtener la ubicación de las IPs.")
                 
         except Exception as e:
-            st.error(f"Error al conectar: {target}")
+            st.error(f"Error: {e}")
+
+st.info("💡 Nota: En la web, por seguridad, los servidores ocultan los saltos intermedios. Para ver la ruta completa paso a paso, ejecuta este programa en tu computadora local.")
